@@ -1,0 +1,44 @@
+```{r}
+library("glmnet")
+library("caret")
+```
+
+```{r}
+x <- read.csv("design1.csv", header = FALSE)  #this design is -1&1
+y <- read.csv("yresult.csv", header = FALSE)
+x <- matrix(factor(unlist(x)), nrow = 12, ncol = 20)
+x <- data.frame(x)
+```
+
+```{r}
+training <- cbind(y=y[,1], x)
+fitlm <- lm(y~., data=training)
+#normal factor level regression does not work
+```
+
+
+```{r}
+set.seed(233)
+training <- cbind(y=y[1,], x)
+colnames(training)[1] <- "y"
+lassoFit <- train(y~., method = "lasso", data=training)
+lassoFit$finalModel
+```
+
+
+
+```{r}
+fit1 <- glmnet(x, y[,1])
+beta1<-coef(fit1,s=0.01)
+```
+
+```{r}
+total <- 0
+for(t in 1:100)
+{
+    fit1 <- glmnet(x, t(y[t,]))
+    beta1<-coef(fit1,s=0.01)
+    if('1' %in% beta1@i)
+        total <- total+1
+}
+```
