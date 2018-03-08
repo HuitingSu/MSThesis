@@ -10,7 +10,7 @@ library(glmnet)
 
 ```{r}
 set.seed(65587)
-x <- matrix(rnorm(100), 25, 4)
+x <- matrix(rnorm(10000), 2500, 4)
 #x <- as.data.frame(x)
 #colnames(x) <- c('x1', 'x2', 'x3', 'x4')
 
@@ -27,11 +27,33 @@ plot(mfit,type.coef="2norm", label = TRUE)
 
 Extract coefficients at a single value of lambda.
 ```{r}
-coef(mfit, s=1)  
-coef(mfit, s=0.1)  
-coef(mfit, s=0.001)
+#coef(mfit, s=1)  
+cbind(coef(mfit, s=0.1)$y1, coef(mfit, s=0.1)$y2, coef(mfit, s=0.1)$y3)    
+#coef(mfit, s=0.001)
 ```
 According to the result, x2 is never chosen. When regulation is large, x4 is also not chosen. x1 and x3 are cosidered to be important. 
 
+```{r}
+fit1 = glmnet(x, y[,1])
+fit2 = glmnet(x, y[,2])
+fit3 = glmnet(x, y[,3])
+cbind(coef(fit1, s=0.1), coef(fit2, s=0.1),coef(fit3, s=0.1))  
+```
 
+Use Cross Validation to select $\lambda$, and compare.
+```{r}
+cv.mfit = cv.glmnet(x, y, family = "mgaussian")
+cv.fit1 = cv.glmnet(x, y[,1])
+cv.fit2 = cv.glmnet(x, y[,2])
+cv.fit3 = cv.glmnet(x, y[,3])
+plot(cv.mfit)
+plot(cv.fit1)
+plot(cv.fit2)
+plot(cv.fit3)
+```
+
+```{r}
+cbind(coef(cv.mfit)$y1, coef(cv.mfit)$y2, coef(cv.mfit)$y3)
+cbind(coef(cv.fit1), coef(cv.fit2), coef(cv.fit3))
+```
 
