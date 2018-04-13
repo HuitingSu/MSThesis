@@ -1,0 +1,81 @@
+---
+title: "Correlation"
+author: "Huiting Su"
+date: "April 4, 2018"
+output: html_document
+---
+
+### See how correlation influence. 
+
+```{r}
+#library(MASS)
+library(glmnet)
+```
+
+n: the number of samples ("rows" of data) required.
+mu: a vector giving the means of the variables.
+Sigma: positive-definite symmetric matrix specifying the covariance matrix of the variables.
+
+The problem: n x p -> 3 x 4. N(0, 1)
+
+
+### Define the global variable X, y1, y2, y3.
+```{r}
+set.seed(65587)
+# n = 2500, p = 4 
+X <- matrix(rnorm(10000), 2500, 4)
+
+# Have 3 different responses
+y1 <- 0.9 * X[, 1] + 0.00 * X[, 2] + 1.2 * X[, 3] + 0.9 * X[, 4]
+y2 <- 1.1 * X[, 1] + 0.02 * X[, 2] + 0.01 * X[, 3] + 0.05 * X[, 4]
+y3 <- 0.9 * X[, 1] + 0.01 * X[, 2] + 1.3 * X[, 3] + 0.01 * X[, 4]
+
+w = c(0.9, 0.00, 1.2, 0.9, 1.1, 0.02, 0.01, 0.05, 0.9, 0.01, 1.3, 0.01)
+w = matrix(w, 4, 3)
+```
+
+### Function for multi-task LASSO experiment
+```{r}
+mt_LASSO <- function(Cov){
+    set.seed(12345)
+    # epsilon is the gaussian error. dimension: n * 3. 
+    epsilon <- MASS::mvrnorm(n=2500, mu = rep(0, 3), Sigma = Cov)
+    y <- cbind(y1, y2, y3)  
+    y <- y + epsilon
+    
+    mt_fit = glmnet(X, y, family = "mgaussian")
+    plot(mt_fit, type.coef = "2norm", label = TRUE)
+    
+    ## Use Cross Validation to select $\lambda$, and compare.
+    cv.mt_fit = cv.glmnet(X, y, family = "mgaussian", intercept = FALSE)
+    cv.fit1 = cv.glmnet(X, y[, 1], intercept = FALSE)
+    cv.fit2 = cv.glmnet(X, y[, 2], intercept = FALSE)
+    cv.fit3 = cv.glmnet(X, y[, 3], intercept = FALSE)
+    #plot(cv.mt_fit)
+    #plot(cv.fit1)
+    #plot(cv.fit2)
+    #plot(cv.fit3)
+    
+    # multi-task
+    mt_beta = cbind(coef(cv.mt_fit)$y1, coef(cv.mt_fit)$y2, coef(cv.mt_fit)$y3)
+    mt_beta = mt_beta[-1,]
+    print(mt_beta)
+    print( sum((mt_beta - w)^2) )
+    
+    # lasso for each response
+    lasso_beta = cbind(coef(cv.fit1), coef(cv.fit2), coef(cv.fit3))
+    lasso_beta = lasso_beta[-1,]
+    print(lasso_beta)
+    print( sum((lasso_beta - w)^2) )
+}
+```
+
+
+
+
+1. No correlation.
+```{r}
+Cov1 = diag(3)
+Cov1
+mt_LASSO(Cov1)
+```

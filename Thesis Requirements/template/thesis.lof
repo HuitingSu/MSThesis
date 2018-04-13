@@ -1,0 +1,11 @@
+\contentsline {figure}{\numberline {B.1}{\ignorespaces By default figures are not centered. This is a long caption to demonstrate that captions are single spaced. }}{5}
+\contentsline {figure}{\numberline {B.2}{\ignorespaces Use {\tt \char '134centering\/} to center figures.}}{6}
+\contentsline {figure}{\numberline {B.3}{\ignorespaces This is another figuure.}}{7}
+\contentsline {figure}{\numberline {B.4}{\ignorespaces This figure has two parts.}}{7}
+\contentsline {subfigure}{\numberline {(a)}{\ignorespaces {First subcaption.}}}{7}
+\contentsline {subfigure}{\numberline {(b)}{\ignorespaces {Second subcaption.}}}{7}
+\contentsline {figure}{\numberline {B.5}{\ignorespaces This figure has four parts.}}{8}
+\contentsline {subfigure}{\numberline {(a)}{\ignorespaces {First subcaption.}}}{8}
+\contentsline {subfigure}{\numberline {(b)}{\ignorespaces {Second subcaption.}}}{8}
+\contentsline {subfigure}{\numberline {(c)}{\ignorespaces {Third subcaption.}}}{8}
+\contentsline {subfigure}{\numberline {(d)}{\ignorespaces {Fourth subcaption.}}}{8}
