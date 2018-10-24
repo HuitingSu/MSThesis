@@ -1,0 +1,163 @@
+### Test Probability and compare with the probability in paper.
+```{r}
+library(MASS)
+library(glmnet)
+```
+
+```{r}
+n_rep = 5
+n <- 12
+p <- 16
+l <- 3
+q <- 2  # number of true variables
+
+X <- read.csv("design1226.csv", skip = 7, header = FALSE)
+X <- apply(X, 1, gsub, pattern="\\+", replacement= "1", perl=TRUE)
+X <- apply(X, 1, gsub, pattern="\\-", replacement= "-1", perl=TRUE)
+X <- matrix(as.numeric(X), n, p)
+mt_SC <- numeric(n_rep)
+```
+
+```{r}
+getXy = function(){
+    b <- matrix(0,p,l)
+    true_var <- sample(p, q)  
+    for(k in 1:q){
+        for (j in 1:l){
+            vsign = sample(c(-1,1), 1)
+            b[true_var[k], j] <- vsign * runif(1, 3, 5)
+        }
+    }
+                
+    true_var <- c(1,3)
+    b[true_var,] <- 2
+    y <- X %*% b
+    # epsilon is the gaussian error. dimension: n * l.
+    epsilon <- matrix(rnorm(n * l), n, l)
+    y <- y + epsilon
+}
+```
+
+
+```{r}
+require(parallel)
+```
+
+For known combination of true_var, b, lambda, etc, estimate the PDC in multiple reps.
+```{r}
+estimate_PDC = function(lambda, true_var, b_current){
+    q = length(true_var)
+    I = diag(n)
+    XA <- X[, true_var]
+    XC <- X[, -true_var]
+    bA <- b_current[true_var,]
+    sgnbA <- sign(bA)
+    P = solve(t(XA) %*% XA)
+    normb = apply(bA, 1, function(x) sqrt(sum(x^2)))
+    std_b = t(sapply(1:q, function(x) bA[x,]/normb[x]))
+    lowerbound = 0.9
+    
+    # eq1 = function(j, ks, V){
+    #     #if((sum(ks[j,]>=0) == l || sum(ks[j,]<=0) == l) && max(ks[j,])-min(ks[j,]) < sigma){
+    #     std_Vj = V[j,] / sqrt(sum(V[j,]^2))
+    #     cos_theta = std_Vj %*% std_b[j,]
+    #     if((sum(ks[j,]>=0) == l || sum(ks[j,]<=0) == l) && cos_theta > lowerbou){
+    #         if(sum(ks[j,]) >=0) return(TRUE)    ## Their direction is the same
+    #         else return(sum(bA[j,]^2) > sum(V[j,]^2)) ## Opposite direction
+    #     }
+    #     else return(FALSE)
+    # }
+    
+    eq1 = function(j, V){
+        std_Vj = V[j,] / sqrt(sum(V[j,]^2))
+        cos_theta = std_Vj %*% std_b[j,]
+        if(abs(cos_theta) > lowerbound){
+            if(cos_theta >=0) return(TRUE)    ## Their direction is the same
+            else return(sum(bA[j,]^2) > sum(V[j,]^2)) ## Opposite direction
+        }
+        else return(FALSE)
+    }
+    
+    eq2 = function(j, E){
+        left = t(XC[,j]) %*% (XA %*% P %*% (t(XA)%*%E - n*lambda*std_b) - E )
+        left = sqrt(sum(left^2))
+        left <= n*lambda
+    }
+    
+    # in this function, return TRUE or FALSE each rep
+    calPDC = function(true_var, b, lambda, x){
+        E <- matrix(mvrnorm(1, rep(0, n*l), diag(n*l)), n, l) 
+        
+        V = P %*% (t(XA)%*%E - n*lambda*std_b)
+        
+        equation1 = sapply(1:q, function(j) eq1(j, V))
+        eq1_result = sum(equation1) == q
+        
+        equation2 = sapply(1:dim(XC)[2], function(j) eq2(j, E))
+        eq2_result = sum(equation2) == (p-q)
+        
+        eq1_result && eq2_result
+    }
+    
+    isEventPar = function(true_var, b, lambda, trialIndices){
+        sapply(1:length(trialIndices), function(x) calPDC(true_var, b, lambda, x))
+    }
+    
+    set.seed(0)
+    outcomes = pvec(1:10000, function(x) isEventPar(true_var, b, lambda, x))
+    mean(outcomes)
+}
+```
+
+```{r}
+selfvoting = function(){
+    lambda0 = 0
+    lambda = 2
+    fit = glmnet(X, y, family = "mgaussian", intercept = FALSE)
+    
+    while(abs(lambda - lambda0) > 0.01){
+        #4. Check whether lambda changed
+        lambda0 = lambda
+        
+        #1. estimate beta using an initial lambda
+        mt_beta <- matrix(0, p, l)
+        for(i in 1:l){
+            mt_beta[,i] = eval(parse(text = paste('coef(fit, s=lambda0)$y', i, sep='')))[-1,] 
+        }
+        estimated_A = which(rowSums(mt_beta) != 0)
+        X_Ahat = X[,estimated_A]
+        
+        #2. OLS estimate regressed only on A 
+        estimated_b = apply(y, 2, function(yi) solve(t(X_Ahat) %*% X_Ahat) %*% t(X_Ahat) %*% yi)
+        b_current = matrix(0,p,l)
+        b_current[estimated_A,] = estimated_b
+        
+        #3. Calculate PDC and approximate lambda_opt
+        lambda <- optim(lambda, estimate_PDC, method= 'L-BFGS-B', lower = 0, control=list(fnscale=-1), true_var = estimated_A, b_current = b_current)[[1]]
+    }
+}
+```
+
+
+
+```{r}
+sapply(seq(0.5,4,by=0.3), estimate_PDC, true_var = true_var, b_current = b)
+```
+
+
+```{r}
+cvmfit = cv.glmnet(X, y, family = "mgaussian", intercept = FALSE)
+plot(cvmfit)
+coef(cvmfit, s =0.46785)
+```
+
+
+
+
+
+
+
+
+
+
+

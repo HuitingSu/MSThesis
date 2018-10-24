@@ -1,0 +1,79 @@
+---
+title: "Correlation"
+author: "Huiting Su"
+date: "April 4, 2018"
+output: html_document
+---
+
+### Larger model no correlation.
+### Conclusion: multi-task lasso model is not sparse
+```{r}
+#library(MASS)
+library(glmnet)
+```
+# add design
+
+
+n: the number of samples ("rows" of data) required.
+mu: a vector giving the means of the variables.
+Sigma: positive-definite symmetric matrix specifying the covariance matrix of the variables.
+
+X: n x p  N(0, 1)
+p: number of factors
+l: number of tasks
+y: n x l  response
+epsilon : n x l  noise
+w : p x l. wij is the coef of factor i for task j
+
+### Define the global variable X, y1, y2, y3.
+```{r}
+set.seed(65587)
+# n = 1000, p = 50, l = 20 
+X <- matrix(rnorm(50000), 1000, 50)
+
+# Have 20 different responses
+w_cov = diag(5)
+diag(w_cov) = c(1, 0.25, 0.1, 0.05, 0.01)
+set.seed(474753)
+w = MASS::mvrnorm(n=20, mu = rep(0, 5), Sigma = w_cov)
+w = t(w)
+w2 = matrix(0, 45, 20) 
+w = rbind(w, w2)
+y = X %*% w   #nxpxpxl -> nxl
+set.seed(12345)
+# epsilon is the gaussian error. dimension: n * 3. 
+epsilon <- matrix(rnorm(20000), 1000, 20)
+y <- y + epsilon
+```
+
+### Function for multi-task LASSO experiment
+```{r}
+mt_fit = glmnet(X, y, family = "mgaussian")
+plot(mt_fit, type.coef = "2norm", label = TRUE)
+
+## Use Cross Validation to select $\lambda$, and compare.
+cv.mt_fit = cv.glmnet(X, y, family = "mgaussian", intercept = FALSE)
+cv.fit1 = cv.glmnet(X, y[, 1], intercept = FALSE)
+cv.fit2 = cv.glmnet(X, y[, 2], intercept = FALSE)
+cv.fit3 = cv.glmnet(X, y[, 3], intercept = FALSE)
+#plot(cv.mt_fit)
+#plot(cv.fit1)
+#plot(cv.fit2)
+#plot(cv.fit3)
+
+# multi-task
+mt_beta = cbind(coef(cv.mt_fit)$y1, coef(cv.mt_fit)$y2, coef(cv.mt_fit)$y3)
+mt_beta = mt_beta[-1, ]
+print(mt_beta)
+#print(sum((mt_beta - w) ^ 2))
+
+# lasso for each response
+lasso_beta = cbind(coef(cv.fit1), coef(cv.fit2), coef(cv.fit3))
+lasso_beta = lasso_beta[-1, ]
+print(lasso_beta)
+#print(sum((lasso_beta - w) ^ 2))
+
+```
+
+
+

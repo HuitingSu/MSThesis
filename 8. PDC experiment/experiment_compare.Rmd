@@ -1,0 +1,253 @@
+### Test Probability and compare with the probability in paper.
+```{r}
+library(MASS)
+library(glmnet)
+library(xlsx)
+```
+
+```{r}
+n_rep = 30
+n <- 12
+p <- 22
+l <- 5
+q <- 2  # number of true variables
+sigma <- 1
+
+X <- read.csv("design1222.csv", skip = 7, header = FALSE)
+X <- apply(X, 1, gsub, pattern="\\+", replacement= "1", perl=TRUE)
+X <- apply(X, 1, gsub, pattern="\\-", replacement= "-1", perl=TRUE)
+X <- matrix(as.numeric(X), n, p)
+mt_SC <- logical(n_rep)
+y <<- matrix(0, n, l)
+b <<- matrix(0, p, l)
+true_var <<- numeric(q)
+yy <- numeric()
+bb <- numeric()
+bhat <<- numeric()
+```
+
+```{r}
+getXy = function(){
+    true_var <<- sample(p, q) 
+    if(true_var[1] > true_var[2])true_var <<- c(true_var[2], true_var[1])
+    b <<- matrix(0, p, l)
+    for(k in 1:q){
+        for (j in 1:l){
+            vsign = sample(c(-1,1), 1)
+            b[true_var[k], j] <<- vsign * runif(1, 3, 7)
+        }
+    }
+    y <<- X %*% b
+    # epsilon is the gaussian error. dimension: n * l.
+    epsilon <- matrix(rnorm(n * l), n, l)
+    y <<- y + epsilon
+    #return(list(b, y, true_var))
+}
+```
+
+
+```{r}
+require(parallel)
+```
+
+For known combination of true_var, b, lambda, etc, estimate the PDC in multiple reps.
+```{r}
+estimate_PDC = function(lambda, estimated_A, b_current){
+    q = length(estimated_A)
+    I = diag(n)
+    XA <- X[, estimated_A]
+    XC <- X[, -estimated_A]
+    bA <- b_current[estimated_A,]
+    sgnbA <- sign(bA)
+    P = try(solve(t(XA) %*% XA), TRUE)
+    if(inherits(P, "try-error"))return(0)
+    normb = apply(bA, 1, function(x) sqrt(sum(x^2)))
+    std_b = t(sapply(1:q, function(x) bA[x,]/normb[x]))
+    lowerbound = 0.9
+    
+    # eq1 = function(j, ks, V){
+    #     #if((sum(ks[j,]>=0) == l || sum(ks[j,]<=0) == l) && max(ks[j,])-min(ks[j,]) < sigma){
+    #     std_Vj = V[j,] / sqrt(sum(V[j,]^2))
+    #     cos_theta = std_Vj %*% std_b[j,]
+    #     if((sum(ks[j,]>=0) == l || sum(ks[j,]<=0) == l) && cos_theta > lowerbou){
+    #         if(sum(ks[j,]) >=0) return(TRUE)    ## Their direction is the same
+    #         else return(sum(bA[j,]^2) > sum(V[j,]^2)) ## Opposite direction
+    #     }
+    #     else return(FALSE)
+    # }
+    
+    eq1 = function(j, V){
+        std_Vj = V[j,] / sqrt(sum(V[j,]^2))
+        cos_theta = std_Vj %*% std_b[j,]
+        if(abs(cos_theta) > lowerbound){
+            if(cos_theta >=0) return(TRUE)    ## Their direction is the same
+            else return(sum(bA[j,]^2) > sum(V[j,]^2)) ## Opposite direction
+        }
+        else return(FALSE)
+    }
+    
+    eq2 = function(j, E){
+        left = t(XC[,j]) %*% (XA %*% P %*% (t(XA)%*%E - n*lambda*std_b) - E )
+        left = sqrt(sum(left^2))
+        left <= n*lambda
+    }
+    
+    # in this function, return TRUE or FALSE each rep
+    calPDC = function(estimated_A, lambda, x){
+        E <- matrix(mvrnorm(1, rep(0, n*l), diag(n*l)), n, l) 
+        
+        V = P %*% (t(XA)%*%E - n*lambda*std_b)
+        
+        equation1 = sapply(1:q, function(j) eq1(j, V))
+        eq1_result = sum(equation1) == q
+        
+        equation2 = sapply(1:dim(XC)[2], function(j) eq2(j, E))
+        eq2_result = sum(equation2) == (p-q)
+        
+        eq1_result && eq2_result
+    }
+    
+    isEventPar = function(estimated_A, lambda, trialIndices){
+        sapply(1:length(trialIndices), function(x) calPDC(estimated_A, lambda, x))
+    }
+    
+    outcomes = pvec(1:10000, function(x) isEventPar(estimated_A, lambda, x))
+    mean(outcomes)
+}
+```
+
+
+```{r}
+msv = function(){
+    fit = glmnet(X, y, family = "mgaussian", intercept = FALSE)
+    attempt <- 0
+    max_PDC = 0
+    mt_b_best = matrix(0, p, l)
+    while(attempt < 1){
+        attempt = attempt + 1
+        lambda0 = 0
+        lambda = rnorm(1, mean=4, sd =0.5)
+        while(abs(lambda - lambda0) > 0.01){
+            #4. Check whether lambda changed
+            lambda0 = lambda
+            
+            #1. estimate beta using an initial lambda
+            mt_beta <- matrix(0, p, l)
+            for(i in 1:l){
+                mt_beta[,i] = eval(parse(text = paste('coef(fit, s=lambda0)$y', i, sep='')))[-1,] 
+            }
+            estimated_A = which(rowSums(mt_beta) != 0)
+            X_Ahat = X[,estimated_A]
+            
+            #2. OLS estimate regressed only on A 
+            estimated_b = apply(y, 2, function(yi) solve(t(X_Ahat) %*% X_Ahat) %*% t(X_Ahat) %*% yi)
+            b_current = matrix(0,p,l)
+            b_current[estimated_A,] = estimated_b
+            
+            #3. Calculate PDC and approximate lambda_opt
+            result <- optim(lambda, estimate_PDC, method= 'L-BFGS-B', lower = 0, control=list(fnscale=-1), estimated_A = estimated_A, b_current = b_current)
+            lambda <- result$par
+            value <- result$value
+        }
+
+        if(value > max_PDC){
+            max_PDC = value
+            mt_b_best = mt_beta
+        }
+    }
+    bhat <<- rbind(bhat, mt_b_best)
+    return(sum(sign(mt_b_best)==sign(b))==p*l)
+}
+```
+
+
+```{r}
+set.seed(43241)
+for(rep_index in 1:n_rep){
+    getXy()
+    yy <- rbind(yy, y)
+    bb <- rbind(bb, b)
+    mt_SC[rep_index] <- msv()
+} 
+```
+
+Rerun if FALSE.
+```{r}
+rep_index = 11
+y = yy[((rep_index-1)*n+1):(rep_index*n),]
+b = bb[((rep_index-1)*p+1):(rep_index*p),]
+mt_SC[rep_index] <- msv()
+```
+
+Write .csv file
+```{r}
+write.xlsx(bb,"mydata4.xlsx",sheetName="bb",append=FALSE)
+write.xlsx(bhat,"mydata4.xlsx",sheetName="bhat",append=TRUE)
+write.xlsx(yy,"mydata4.xlsx",sheetName="yy",append=TRUE)
+```
+
+
+```{r}
+mt_cv <- logical(rep_index)
+lasso_cv <- logical(rep_index)
+#lasso_sv <- logical(rep_index)
+for(cv_rep in 1:rep_index){
+    y = yy[((cv_rep-1)*n+1):(cv_rep*n),]
+    b = bb[((cv_rep-1)*p+1):(cv_rep*p),]
+    cv.mt_fit = cv.glmnet(X, y, nfolds = 10, family = "mgaussian", intercept = FALSE)
+    mt_beta <- matrix(0, p, l)
+    for(i in 1:l){
+        mt_beta[,i] = eval(parse(text = paste('coef(cv.mt_fit)$y', i, sep='')))[-1,] 
+    }
+    mt_cv[cv_rep] = sum(sign(mt_beta)==sign(b))==p*l
+    
+    cv.fit1 = cv.glmnet(X, y[, 1], nfolds = 10, intercept = FALSE)
+    cv.fit2 = cv.glmnet(X, y[, 2], nfolds = 10, intercept = FALSE)
+    cv.fit3 = cv.glmnet(X, y[, 3], nfolds = 10, intercept = FALSE)
+    cv.fit4 = cv.glmnet(X, y[, 4], nfolds = 10, intercept = FALSE)
+    cv.fit5 = cv.glmnet(X, y[, 5], nfolds = 10, intercept = FALSE)
+    lasso_beta <- matrix(0, p, l)
+    for(i in 1:l){
+        lasso_beta[,i] = eval(parse(text = paste('coef(cv.fit', i,')', sep='')))[-1,]
+    }
+    lasso_cv[cv_rep] = sum(sign(lasso_beta)==sign(b))==p*l
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+PSC = sapply(seq(0.1,8,by=0.1), estimate_PSC, true_var = c(12,14), b = b[,1])
+plot(PSC)
+```
+
+```{r}
+getXy()
+PDC = sapply(seq(1,5,by=1), estimate_PDC, estimated_A = true_var, b_current = b)
+plot(PDC)
+```
+
+```{r}
+cvfit = cv.glmnet(X, y, intercept = FALSE)
+plot(cvfit)
+coef(cvfit, s =2)
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,109 @@
+### Test Probability and compare with the probability in paper.
+```{r}
+library(MASS)
+library(glmnet)
+```
+
+```{r}
+n <- 12
+p <- 16
+l <- 3
+q <- 2  # number of true variables
+
+X <- read.csv("design1226.csv", skip = 7, header = FALSE)
+X <- apply(X, 1, gsub, pattern="\\+", replacement= "1", perl=TRUE)
+X <- apply(X, 1, gsub, pattern="\\-", replacement= "-1", perl=TRUE)
+X <- matrix(as.numeric(X), n, p)
+
+sigma <- 1
+b <- matrix(0,p,l)
+true_var <- c(1,3)
+b[true_var,] <- 2
+y <- X %*% b
+# epsilon is the gaussian error. dimension: n * l.
+epsilon <- matrix(rnorm(n * l), n, l)
+y <- y + epsilon
+```
+
+
+```{r}
+require(parallel)
+isEventPar = function(numDice, numSides, targetValue, trialIndices){
+  sapply(1:length(trialIndices), function(x) sum(sample(1:numSides, numDice, replace=TRUE)) >= targetValue)
+}
+set.seed(0)
+outcomes = pvec(1:10000, function(x) isEventPar(2, 6, 7, x))
+mean(outcomes)
+```
+
+```{r}
+require(parallel)
+```
+
+For known combination of true_var, b, lambda, etc, estimate the PDC in multiple reps.
+```{r}
+PDC = function(lambda){
+    q = length(true_var)
+    I = diag(n)
+    XA <- X[, true_var]
+    XC <- X[, -true_var]
+    bA <- b[true_var,]
+    sgnbA <- sign(bA)
+    P = solve(t(XA) %*% XA)
+    normb = apply(bA, 1, function(x) sqrt(sum(x^2)))
+    Std_b = t(sapply(1:q, function(x) bA[x,]/normb[x]))
+    
+    eq1 = function(j, k, E){
+        V = -t(XA[,j])%*% E[,k] / t(XA[,j])%*%XA[,j]
+        bA[j,k] < min(0, V) || bA[j,k] > max(0, V)
+    }
+    
+    eq2 = function(j, E){
+        left = t(XC[,j]) %*% (XA %*% P %*% (t(XA)%*%E - n*lambda*Std_b) - E )
+        left = sqrt(sum(left^2))
+        left <= n*lambda
+    }
+    
+    # in this function, return TRUE or FALSE each rep
+    calPDC = function(true_var, b, lambda, x){
+        E <- matrix(mvrnorm(1, rep(0, n*l), diag(n*l)), n, l) 
+        
+        equation1 = t(sapply(1:q, function(j) sapply(1:l, function(k) eq1(j, k, E))))
+        eq1_result = sum(equation1) == q*l
+        
+        equation2 = sapply(1:dim(XC)[2], function(j) eq2(j, E))
+        eq2_result = sum(equation2) == (p-q)
+        
+        #eq1_result && eq2_result
+        eq2_result
+    }
+    
+    isEventPar = function(true_var, b, lambda, trialIndices){
+        sapply(1:length(trialIndices), function(x) calPDC(true_var, b, lambda, x))
+    }
+    
+    set.seed(0)
+    outcomes = pvec(1:10000, function(x) isEventPar(true_var, b, lambda, x))
+    mean(outcomes)
+}
+```
+
+```{r}
+sapply(1:10, PDC)
+```
+
+
+```{r}
+cvmfit = cv.glmnet(X, y, family = "mgaussian")
+plot(cvmfit)
+coef(cvmfit, s =1)
+```
+
+
+
+
+
+
+
+
+

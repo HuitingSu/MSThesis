@@ -1,0 +1,275 @@
+---
+title: "SSD multi-task lasso vs lasso 1216"
+author: "Huiting Su"
+date: "April 4, 2018"
+output: html_document
+---
+I want to test if I select random 3 factors, but the 3 factors are important for all tasks, whether the performance will be better.
+
+
+Design: 1216  
+beta ~ N(0,1)  
+True factors: same for each task -- first 3 factors.
+
+n: the number of samples ("rows" of data) required.
+mu: a vector giving the means of the variables.
+Sigma: positive-definite symmetric matrix specifying the covariance matrix of the variables.
+
+X: n x p  N(0, 1)
+p: number of factors
+l: number of tasks
+y: n x l  response
+epsilon : n x l  noise
+b : p x l. bij is the coef of factor i for task j
+
+```{r, warning= FALSE, message = FALSE, echo=FALSE}
+#library(MASS)
+library(glmnet)
+```
+
+## Initialization
+### (n=12, p=16) , l = 5
+```{r}
+n_rep <- 200 #500 rep is quite long
+a <- 5  # absolute value of true factor
+SameTrue <- TRUE
+#-------------------------
+n <- 12
+p <- 16
+l <- 5
+q <- 2  # number of true variables
+
+X <- read.csv("design1226.csv", skip = 7, header = FALSE)
+X <- apply(X, 1, gsub, pattern="\\+", replacement= "1", perl=TRUE)
+X <- apply(X, 1, gsub, pattern="\\-", replacement= "-1", perl=TRUE)
+X <- matrix(as.numeric(X), n, p)
+
+all_OC <<- numeric(n_rep)
+lasso_OC <<- numeric(n_rep)
+mt_OC <<- numeric(n_rep)
+lasso_SC <<- numeric(n_rep)
+mt_SC <<- numeric(n_rep)
+# lasso_OC2 <<- numeric()
+# mt_OC2 <<- numeric()
+# lasso_SC2 <<- numeric()
+# mt_SC2 <<- numeric()
+```
+
+### Define the global variable X, b, y. Replicate 10000 times.
+```{r}
+getXy <- function(){
+    # Have 5 different responses
+    # There are 3 same true var for different tasks, the true vars are randomly chosen
+    
+    # for every task, we need a vector to set the true vars
+    b <<- matrix(0, p, l)
+    if(SameTrue == TRUE){       #in this case, the variable is equal for every task
+        true_var <- sample(p, q)  
+        for(k in 1:q){
+            for (j in 1:l){
+                vsign = sample(c(-1,1), 1)
+                b[true_var[k], j] <<- vsign * runif(1, 3, 5) #a  #runif(3, 3, 5)
+            }
+        }
+        
+    }else{
+        for (j in 1:l){         #for each task, sample different true factors
+            true_var <- sample(p, q)
+            b[true_var, j] <<- a  #runif(3, 3, 5)
+        }
+    }
+    
+    y <<- X %*% b
+    # epsilon is the gaussian error. dimension: n * l.
+    epsilon <- matrix(rnorm(n * l), n, l)
+    
+    y <<- y + epsilon
+    g <<- rowSums(y)
+}
+```
+
+
+### Function for multi-task LASSO experiment
+```{r}
+compare <- function(ii) {
+    mt_fit = glmnet(X, y, family = "mgaussian")
+    #plot(mt_fit, type.coef = "2norm", label = TRUE)
+    
+    ## Use Cross Validation to select $\lambda$, and compare.
+    cv.fitall = cv.glmnet(X, g, nfolds = 5, intercept = FALSE)
+    cv.mt_fit = cv.glmnet(X, y, nfolds = 5, family = "mgaussian", intercept = FALSE)
+    cv.fit1 = cv.glmnet(X, y[, 1], nfolds = 5, intercept = FALSE)
+    cv.fit2 = cv.glmnet(X, y[, 2], nfolds = 5, intercept = FALSE)
+    cv.fit3 = cv.glmnet(X, y[, 3], nfolds = 5, intercept = FALSE)
+    cv.fit4 = cv.glmnet(X, y[, 4], nfolds = 5, intercept = FALSE)
+    cv.fit5 = cv.glmnet(X, y[, 5], nfolds = 5, intercept = FALSE)
+    # Option grouped=FALSE enforced in cv.glmnet, since < 3 observations per fold
+    # If grouped=FALSE, an error matrix is built up at the observation level from the predictions from the nfold fits, and then summarized
+    
+    #plot(cv.mt_fit)
+    #plot(cv.fit1)
+    #plot(cv.fit2)
+    #plot(cv.fit3)
+    
+    # lasso for all
+    all_beta <- matrix(0, p, l)
+    for(i in 1:l){
+        all_beta[,i] = coef(cv.fitall)[-1,]
+    }
+
+    # multi-task
+    mt_beta <- matrix(0, p, l)
+    for(i in 1:l){
+        mt_beta[,i] = eval(parse(text = paste('coef(cv.mt_fit)$y', i, sep='')))[-1,] 
+    }
+    #####print(mt_beta)
+    
+    
+    # lasso for each response
+    lasso_beta <- matrix(0, p, l)
+    for(i in 1:l){
+        lasso_beta[,i] = eval(parse(text = paste('coef(cv.fit', i,')', sep='')))[-1,]
+    }
+    ####print(lasso_beta)
+    
+    # get whether correct selection, and sign correctness
+    # First one is selecting all the correct variable is correct 
+    all_OC[ii] <<- sum(as.logical(b) == as.logical(all_beta)) == p*l 
+    mt_OC[ii] <<- sum(as.logical(b) == as.logical(mt_beta)) == p*l
+    lasso_OC[ii] <<- sum(as.logical(b) == as.logical(lasso_beta)) == p * l
+    
+    mt_SC[ii] <<- sum(sign(b) == sign(mt_beta)) == p*l
+    lasso_SC[ii] <<- sum(sign(b) == sign(lasso_beta)) == p*l
+    
+    # Second one calculates the correct ratio in every rep 
+    # mt_OC2 <<- c(mt_OC2, sum(as.logical(b) == as.logical(mt_beta)) / (p * l))
+    # lasso_OC2 <<- c(lasso_OC2, sum(as.logical(b) == as.logical(lasso_beta)) / (p * l))
+    # 
+    # mt_SC2 <<- c(mt_SC2, sum(sign(b) == sign(mt_beta)) / (p * l))
+    # lasso_SC2 <<- c(lasso_SC2, sum(sign(b) == sign(lasso_beta)) / (p * l))
+}
+
+```
+
+Main function
+```{r, warning=FALSE, message=FALSE, cache=TRUE}
+set.seed(87293)
+for(ii in 1:n_rep){
+    getXy()
+    compare(ii)
+}
+#print(mt_OC)
+#print(lasso_OC)
+
+cat(mean(all_OC), mean(mt_OC), mean(lasso_OC), mean(mt_SC), mean(lasso_SC),'\n')#, mean(mt_OC2), mean(lasso_OC2), mean(mt_SC2), mean(lasso_SC2),'\n')
+print(
+    cbind(
+        t.test(all_OC)$conf.int[1:2],
+        t.test(mt_OC)$conf.int[1:2],
+        t.test(lasso_OC)$conf.int[1:2],
+        t.test(mt_SC)$conf.int[1:2],
+        t.test(lasso_SC)$conf.int[1:2])
+        #t.test(mt_OC2)$conf.int[1:2],
+        # t.test(lasso_OC2)$conf.int[1:2],
+        # t.test(mt_SC2)$conf.int[1:2],
+        # t.test(lasso_SC2)$conf.int[1:2])
+    )
+```
+
+1m15s
+
+
+----------------------------------------------
+Analysis of the matrix:
+Calculation of E(s^2): 
+```{r}
+sums <- 0
+pp <- 16
+for(i in 1:(pp-1))
+    for(j in (i+1):pp){
+        s <- t(X[,i]) %*% X[,j]
+        sums <- sums + s^2
+    }
+sums <- sums * 2/ pp /(pp-1)
+```
+
+total E(s^2): 5.2
+sums 14~16: 16
+sums 1~3: 32
+     2~4: 48
+     4~6: 0
+sums 8~10: 16
+sums 5~7: 16
+
+
+The first 3 factors are significant, so compare the first columns.
+
+
+Calculate RSS:
+1. Every two column
+```{r}
+sums <- 0
+pp <- 16
+
+for(a1 in 1:(pp-1))
+    for(a2 in (a1+1):pp){
+        XC <- X[,-c(a1, a2)]
+        XA <- X[, c(a1, a2)]
+        invXA <- solve(t(XA) %*% XA)
+        s <- t(XC) %*% XA %*% invXA %*% invXA %*% t(XA) %*% XC 
+        #cat(a1, a2, sum(diag(s)), "\n")
+        sums <- sums + sum(diag(s))
+    }
+```        
+
+2. Every three column
+```{r}                
+sums <- 0
+pp <- 16
+
+for(a1 in 1:(pp-2))
+    for(a2 in (a1+1):(pp-1))
+        for(a3 in (a2+1):(pp-1)){
+            XC <- X[,-c(a1, a2, a3)]
+            XA <- X[, c(a1, a2, a3)]
+            invXA <- solve(t(XA) %*% XA)
+            s <- t(XC) %*% XA %*% invXA %*% invXA %*% t(XA) %*% XC 
+            cat(a1, a2, a3, sum(diag(s)), "\n")
+            sums <- sums + sum(diag(s))
+    }
+```
+
+
+Linear relation
+1. for every 2 columns
+```{r}
+pp <- 16
+diff2 <- numeric()
+for(a1 in 1:(pp-1))
+    for(a2 in (a1+1):pp)
+            for(b in 1:pp){
+                if(a1 != b && a2 != b){
+                    diff2 <- cbind(diff2, X[,a1]+X[,a2]-X[,b]) 
+                } 
+            }
+```
+
+2. for every 3 columns
+```{r}
+pp <- 16
+diff3 <- numeric()
+for(a1 in 1:(pp-2))
+    for(a2 in (a1+1):(pp-1))
+        for(a3 in (a2+1):pp)
+            for(b in 1:pp){
+                if(a1 != b && a2 != b && a3 != b){
+                    diff3 <- cbind(diff3, X[,a1]+X[,a2]+X[,a3]-X[,b]) 
+                } 
+            }
+            
+```
+
+
+
+
+

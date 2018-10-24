@@ -1,0 +1,101 @@
+### Test Probability and compare with the probability in paper.
+```{r}
+n <- 12
+p <- 16
+l <- 1
+q <- 3  # number of true variables
+
+X <- read.csv("design1226_table4.csv", skip = 7, header = FALSE)
+X <- apply(X, 1, gsub, pattern="\\+", replacement= "1", perl=TRUE)
+X <- apply(X, 1, gsub, pattern="\\-", replacement= "-1", perl=TRUE)
+X <- matrix(as.numeric(X), n, p)
+
+sigma <- 1
+b <- matrix(0,p,l)
+true_var <- c(1,3,9)
+b[true_var] <- 2
+y <- X %*% b
+# epsilon is the gaussian error. dimension: n * l.
+epsilon <- matrix(rnorm(n * l), n, l)
+y <- y + epsilon
+```
+
+```{r}
+n_sample = 10000
+n_rep = 100
+lambda <- 1 
+PSC <- numeric(n_rep)
+for(i in 1:n_rep){
+    I = diag(n)
+    XA <- X[, true_var]
+    XC <- X[, -true_var]
+    bA <- b[true_var,]
+    sgnbA <- sign(bA)
+    inv = solve(t(XA) %*% XA)
+    
+    R <- t(XC) %*% XA %*% inv %*% sgnbA
+    P <- XA %*% inv %*% t(XA)
+    D <- lambda/2 * inv %*% sgnbA
+    
+    U <- mvrnorm(n = n_sample, R, 4*sigma^2/lambda^2 * t(XC) %*% (I-P) %*% t(I-P) %*% XC)
+    V <- mvrnorm(n = n_sample, D, sigma^2 * inv %*% t(XA) %*% XA %*% t(inv))  # the later is I
+    
+    P1 <- U >= -1 & U <= 1   # a vector showing every rep
+    P1 <- rowSums(P1) == (p - q)
+    Vpos = matrix(sapply(V,max,0),n_sample, q)
+    Vneg = matrix(sapply(V,min,0),n_sample, q)
+    P2 <- rowSums(bA >= Vpos | bA <= Vneg) == q
+    
+    PSC[i] = sum(P1 & P2)/n_sample
+    lambda <- lambda + 0.5
+}
+plot(PSC)
+PSC[60:65]
+```
+
+This result is consistent with the result in paper.
+
+
+Use LASSO to screen when at different lambda. This result is not consistent with the PSC.
+Define the functions:
+```{r}
+soft_threshold <- function(w, th){
+    if(abs(w) < th){
+        return(0)
+    }else{
+        return(sign(w)*(abs(w)-th))
+    }
+}
+
+get_residual <- function(w, dim){
+    w[dim] <- 0
+    Y_pred <- X %*% w
+    return(y - Y_pred)
+}
+
+coor_descent <-  function(w0, epsilon, lambda){
+    w = w0
+    w_prev = w0 + epsilon + 1
+    while(sum(abs(w-w_prev) > epsilon)) {
+        w_prev = w
+        for(d in 1:length(w0)){
+            rd = get_residual(w, d)
+            xd = X[,d]
+            w_OLS = t(xd) %*% rd / t(xd) %*% xd
+            w[d] = soft_threshold(w_OLS, lambda/t(xd)%*%xd)
+        } 
+    }
+    return(w)
+}
+```
+
+```{r}
+n_rep = 1000
+PSC_hat = numeric(n_rep)
+for(i in 1:n_rep){
+    b0 = rnorm(p)
+    b_lasso = coor_descent(b0, epsilon = 0.01, lambda = 30)
+    PSC_hat[i] = sum(sign(b_lasso) == sign(b)) == p
+}
+sum(PSC_hat)/n_rep
+```
